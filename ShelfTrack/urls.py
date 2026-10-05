@@ -18,7 +18,8 @@ from django.contrib import admin
 from django.urls import path
 from Inventory.views import product_list, product_detail, low_stock_products
 from Inventory.views import product_page, home, category_list, supplier_list
-from Inventory.views import category_counts, supplier_counts
+from Inventory.views import category_counts, supplier_counts, signup, login
+from Inventory.views import logout
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -31,4 +32,7 @@ urlpatterns = [
     path('suppliers/<int:id>/', supplier_list),
     path('category-counts/', category_counts),
     path('supplier-counts/', supplier_counts),
+    path('auth/signup/', signup),
+    path('auth/login/', login),
+    path('auth/logout/', logout),
 ]

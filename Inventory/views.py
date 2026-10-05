@@ -1,4 +1,7 @@
 from django.shortcuts import render, redirect
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
+from rest_framework.authtoken.models import Token
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from .models import Product, Category, Supplier
@@ -7,8 +10,19 @@ import json
 # Create your views here.
 @csrf_exempt
 def product_list(request):
+    user = get_authenticated_user(request)
 
-    if request.method =='GET':
+    if user is None:
+        return JsonResponse({
+            'error': 'Authentication required'
+        }, status=401)
+
+    if request.method == 'GET':
+        if not has_permission(user, 'Inventory.view_product'):
+            return JsonResponse({
+                'error': 'You do not have permission to view products'
+            }, status=403)
+
         products = Product.objects.all()
 
         data = []
@@ -22,32 +36,39 @@ def product_list(request):
                 'location': product.location,
                 'category': product.category.name,
                 'supplier': product.supplier.name,
+                'created_by': product.created_by.username,
             })
         return JsonResponse(data, safe=False)
-    
+
     if request.method == 'POST':
-        try: 
-            data = json.loads(request.body) 
+        if not has_permission(user, 'Inventory.add_product'):
+            return JsonResponse({
+                'error': 'You do not have permission to create products'
+            }, status=403)
+
+        try:
+            data = json.loads(request.body)
             category = Category.objects.get(id=data['category'])
             supplier = Supplier.objects.get(id=data['supplier'])
 
-            product = Product.objects.create( 
-                name=data['name'], 
-                stock=data['stock'], 
-                price=data['price'], 
+            product = Product.objects.create(
+                name=data['name'],
+                stock=data['stock'],
+                price=data['price'],
                 location=data['location'],
                 category=category,
-                supplier=supplier
-            ) 
- 
-            return JsonResponse({ 
-                'message': 'Product created successfully', 
-                'id': product.id 
-            }, status=201)  
- 
-        except KeyError as e: 
-            return JsonResponse({ 
-                'error': f'Missing field: {e.args[0]}' 
+                supplier=supplier,
+                created_by=user
+            )
+
+            return JsonResponse({
+                'message': 'Product created successfully',
+                'id': product.id
+            }, status=201)
+
+        except KeyError as e:
+            return JsonResponse({
+                'error': f'Missing field: {e.args[0]}'
             }, status=400)
 
         except Category.DoesNotExist:
@@ -59,8 +80,13 @@ def product_list(request):
             return JsonResponse({
                 'error': 'Supplier not found'
             }, status=404)
-    
+
     if request.method == 'PUT':
+        if not has_permission(user, 'Inventory.change_product'):
+            return JsonResponse({
+                'error': 'You do not have permission to update products'
+            }, status=403)
+
         try:
             body = json.loads(request.body)
 
@@ -91,7 +117,7 @@ def product_list(request):
             return JsonResponse({
                 'error': 'Product not found'
             }, status=404)
-        
+
         except Category.DoesNotExist:
             return JsonResponse({
                 'error': 'Category not found'
@@ -103,6 +129,11 @@ def product_list(request):
             }, status=404)
 
     if request.method == 'PATCH':
+        if not has_permission(user, 'Inventory.change_product'):
+            return JsonResponse({
+                'error': 'You do not have permission to update products'
+            }, status=403)
+
         try:
             data = json.loads(request.body)
 
@@ -119,11 +150,11 @@ def product_list(request):
 
             if 'location' in data:
                 product.location = data['location']
-            
+
             if 'category' in data:
                 category = Category.objects.get(id=data['category'])
                 product.category = category
-            
+
             if 'supplier' in data:
                 supplier = Supplier.objects.get(id=data['supplier'])
                 product.supplier = supplier
@@ -146,7 +177,7 @@ def product_list(request):
 
         except Category.DoesNotExist:
             return JsonResponse({
-            'error': 'Category not found'
+                'error': 'Category not found'
             }, status=404)
 
         except Supplier.DoesNotExist:
@@ -155,28 +186,47 @@ def product_list(request):
             }, status=404)
 
     if request.method == 'DELETE':
+        if not has_permission(user, 'Inventory.delete_product'):
+            return JsonResponse({
+                'error': 'You do not have permission to delete products'
+            }, status=403)
+
         try:
             data = json.loads(request.body)
 
             product = Product.objects.get(id=data['id'])
             product.delete()
 
-
             return JsonResponse({
                 'message': 'Product deleted successfully'
             })
+
         except Product.DoesNotExist:
             return JsonResponse({
                 'error': 'Product not found'
             }, status=404)
 
+
 def product_detail(request, id):
+    user = get_authenticated_user(request)
+
+    if user is None:
+        return JsonResponse({
+            'error': 'Authentication required'
+        }, status=401)
+
+    if not has_permission(user, 'Inventory.view_product'):
+        return JsonResponse({
+            'error': 'You do not have permission to view products'
+        }, status=403)
+
     try:
         product = Product.objects.get(id=id)
     except Product.DoesNotExist:
         return JsonResponse({
             'error': 'Product not found'
         }, status=404)
+
     return JsonResponse({
         'id': product.id,
         'name': product.name,
@@ -185,6 +235,7 @@ def product_detail(request, id):
         'location': product.location,
         'category': product.category.name,
         'supplier': product.supplier.name,
+        'created_by': product.created_by.username,
     })
 
 def low_stock_products(request):
@@ -284,3 +335,110 @@ def supplier_counts(request):
         })
 
     return JsonResponse(data, safe=False)
+
+@csrf_exempt
+def signup(request):
+    details = json.loads(request.body)
+
+    try:
+        username = details['username']
+        password = details['password']
+    except KeyError:
+        return JsonResponse({
+            'error': 'Username and password are required'
+        }, status=400)
+
+    try:
+        user = User.objects.create_user(
+            username=username,
+            password=password
+        )
+    except IntegrityError:
+        return JsonResponse({
+            'error': 'Username already exists'
+        }, status=400)
+
+    return JsonResponse({
+        'message': 'User Created Successfully',
+    }, status=201)
+
+@csrf_exempt
+def login(request):
+    details = json.loads(request.body)
+
+    try:
+        username = details['username']
+        password = details['password']
+    except KeyError:
+        return JsonResponse({
+            'error': 'Username and password are required'
+        }, status=400)
+    
+    user = authenticate(
+        username=username,
+        password=password
+    )
+    if user is None:
+        return JsonResponse({
+            'error': 'Invalid username or password'
+        }, status=401)
+    
+    token, created = Token.objects.get_or_create(user=user)
+    return JsonResponse({
+        'message': 'Login successful',
+        'token': token.key
+    }, status=200)
+
+@csrf_exempt
+def logout(request):
+    auth_header = request.headers.get('Authorization')
+
+    if not auth_header:
+        return JsonResponse({
+            'error': 'Authorization token is required'
+        }, status=401)
+
+    parts = auth_header.split()
+
+    if len(parts)!=2 or parts[0]!= 'Token':
+        return JsonResponse({
+            'error': 'Invalid authorization header'
+        }, status=401)
+    
+    token_key = parts[1]
+
+    try:
+        token = Token.objects.get(key=token_key)
+    except Token.DoesNotExist:
+        return JsonResponse({
+            'error': 'Invalid or expired token'
+        }, status=401)
+    
+    token.delete()
+
+    return JsonResponse({
+        'message': 'Logout successfull'
+    }, status=200)
+
+def get_authenticated_user(request):
+    auth_header = request.headers.get('Authorization')
+
+    if not auth_header:
+        return None
+    
+    parts = auth_header.split()
+
+    if len(parts)!=2 or parts[0]!= 'Token':
+        return None
+    
+    token_key = parts[1]
+
+    try:
+        token = Token.objects.get(key=token_key)
+    except Token.DoesNotExist:
+        return None
+    
+    return token.user
+
+def has_permission(user, permission):
+    return user.has_perm(permission)
